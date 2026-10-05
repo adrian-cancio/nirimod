@@ -9,7 +9,14 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Adw, Gdk, Gtk
 
-from nirimod.kdl_parser import KdlNode, find_or_create, set_child_arg, set_node_flag
+from nirimod.kdl_parser import (
+    KdlNode,
+    find_or_create,
+    remove_child,
+    safe_switch_connect,
+    set_child_arg,
+    set_node_flag,
+)
 from nirimod.pages.base import BasePage
 from nirimod.window_effects import (
     blur_effects_enabled,
@@ -60,9 +67,12 @@ class AppearancePage(BasePage):
         shadow_node = layout.get_child("shadow") or KdlNode("shadow")
 
         shadow_on_row = Adw.SwitchRow(title="Enable Shadows")
-        shadow_on_row.set_active(shadow_node.get_child("on") is not None)
-        shadow_on_row.connect(
-            "notify::active", lambda r, _: self._set_shadow_flag("on", r.get_active())
+        shadow_on_init = shadow_node.get_child("on") is not None
+        shadow_on_row.set_active(shadow_on_init)
+        safe_switch_connect(
+            shadow_on_row,
+            shadow_on_init,
+            lambda active: self._set_shadow_flag("on", active),
         )
         shadow_grp.add(shadow_on_row)
 
@@ -119,12 +129,15 @@ class AppearancePage(BasePage):
             title="Draw Behind Window",
             subtitle="Fixes corner artifacts with non-CSD apps",
         )
-        draw_behind_row.set_active(
-            shadow_node.get_child("draw-behind-window") is not None
+        draw_behind_node = shadow_node.get_child("draw-behind-window")
+        draw_behind_init = draw_behind_node is not None and (
+            not draw_behind_node.args or draw_behind_node.args[0] is True
         )
-        draw_behind_row.connect(
-            "notify::active",
-            lambda r, _: self._set_shadow_flag("draw-behind-window", r.get_active()),
+        draw_behind_row.set_active(draw_behind_init)
+        safe_switch_connect(
+            draw_behind_row,
+            draw_behind_init,
+            lambda active: self._set_shadow_flag("draw-behind-window", active),
         )
         shadow_grp.add(draw_behind_row)
         content.append(shadow_grp)
@@ -142,10 +155,12 @@ class AppearancePage(BasePage):
             title="Enable Blur Effects",
             subtitle="Controls the compositor-level blur { off } setting",
         )
-        blur_effects_row.set_active(blur_effects_enabled(nodes))
-        blur_effects_row.connect(
-            "notify::active",
-            lambda r, _: self._set_blur_effects_enabled(r.get_active()),
+        blur_init = blur_effects_enabled(nodes)
+        blur_effects_row.set_active(blur_init)
+        safe_switch_connect(
+            blur_effects_row,
+            blur_init,
+            lambda active: self._set_blur_effects_enabled(active),
         )
         blur_grp.add(blur_effects_row)
 
@@ -153,10 +168,12 @@ class AppearancePage(BasePage):
             title="Force Blur on Windows",
             subtitle="Adds background-effect { blur true } to the global window rule",
         )
-        blur_enabled_row.set_active(global_window_blur_enabled(nodes))
-        blur_enabled_row.connect(
-            "notify::active",
-            lambda r, _: self._set_window_blur_enabled(r.get_active()),
+        blur_win_init = global_window_blur_enabled(nodes)
+        blur_enabled_row.set_active(blur_win_init)
+        safe_switch_connect(
+            blur_enabled_row,
+            blur_win_init,
+            lambda active: self._set_window_blur_enabled(active),
         )
         blur_grp.add(blur_enabled_row)
 
@@ -164,10 +181,12 @@ class AppearancePage(BasePage):
             title="Keep Focused Windows Blurred",
             subtitle="Adds a focused-window rule that forces blur on",
         )
-        focused_blur_row.set_active(focused_window_blur_enabled(nodes))
-        focused_blur_row.connect(
-            "notify::active",
-            lambda r, _: self._set_focused_window_blur_enabled(r.get_active()),
+        foc_blur_init = focused_window_blur_enabled(nodes)
+        focused_blur_row.set_active(foc_blur_init)
+        safe_switch_connect(
+            focused_blur_row,
+            foc_blur_init,
+            lambda active: self._set_focused_window_blur_enabled(active),
         )
         blur_grp.add(focused_blur_row)
 
@@ -175,10 +194,12 @@ class AppearancePage(BasePage):
             title="Use Xray Wallpaper Blur",
             subtitle="Use wallpaper-only blur; disable for regular background blur",
         )
-        xray_row.set_active(global_window_xray_enabled(nodes))
-        xray_row.connect(
-            "notify::active",
-            lambda r, _: self._set_window_blur_xray(r.get_active()),
+        xray_init = global_window_xray_enabled(nodes)
+        xray_row.set_active(xray_init)
+        safe_switch_connect(
+            xray_row,
+            xray_init,
+            lambda active: self._set_window_blur_xray(active),
         )
         blur_grp.add(xray_row)
 
@@ -187,7 +208,10 @@ class AppearancePage(BasePage):
             value=opacity_val, lower=0.1, upper=1.0, step_increment=0.05
         )
         opacity_row = Adw.SpinRow(
-            title="Window Opacity (1 = unset)", adjustment=opacity_adj, digits=2
+            title="Window Opacity (1 = unset)",
+            subtitle="Make windows translucent to reveal background blur",
+            adjustment=opacity_adj,
+            digits=2,
         )
 
         opacity_row._last_val = opacity_val
@@ -205,10 +229,12 @@ class AppearancePage(BasePage):
             title="Draw Border With Background",
             subtitle="Disable to avoid focus colors behind translucent windows",
         )
-        border_bg_row.set_active(get_global_draw_border_with_background(nodes))
-        border_bg_row.connect(
-            "notify::active",
-            lambda r, _: self._set_draw_border_with_background(r.get_active()),
+        border_bg_init = get_global_draw_border_with_background(nodes)
+        border_bg_row.set_active(border_bg_init)
+        safe_switch_connect(
+            border_bg_row,
+            border_bg_init,
+            lambda active: self._set_draw_border_with_background(active),
         )
         blur_grp.add(border_bg_row)
 
@@ -314,12 +340,12 @@ class AppearancePage(BasePage):
         grp = Adw.PreferencesGroup(title=title)
 
         off_row = Adw.SwitchRow(title="Enable")
-        off_row.set_active(node.get_child("off") is None)
-        off_row.connect(
-            "notify::active",
-            lambda r, _, k=key: self._set_layout_border_flag(
-                k, "off", not r.get_active()
-            ),
+        off_init = node.get_child("off") is None
+        off_row.set_active(off_init)
+        safe_switch_connect(
+            off_row,
+            off_init,
+            lambda active, k=key: self._set_layout_border_flag(k, "off", not active),
         )
         grp.add(off_row)
 
@@ -406,7 +432,23 @@ class AppearancePage(BasePage):
         self._commit(f"shadow {prop}")
 
     def _set_shadow_flag(self, flag: str, enabled: bool):
-        set_node_flag(self._get_shadow_node(), flag, enabled)
+        shadow = self._get_shadow_node()
+        if flag == "draw-behind-window":
+            if enabled:
+                set_child_arg(shadow, "draw-behind-window", True)
+            else:
+                remove_child(shadow, "draw-behind-window")
+            self._commit("shadow draw-behind-window")
+            return
+        if flag == "on":
+            if enabled:
+                remove_child(shadow, "off")
+                set_node_flag(shadow, "on", True)
+            else:
+                remove_child(shadow, "on")
+            self._commit("shadow on")
+            return
+        set_node_flag(shadow, flag, enabled)
         self._commit(f"shadow {flag}")
 
     def _set_shadow_color(self, rgba: Gdk.RGBA):

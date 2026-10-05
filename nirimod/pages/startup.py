@@ -166,9 +166,29 @@ class StartupPage(BasePage):
             new_node = make_startup_node(cmd, is_sh, delay)
             entries = self._get_entries()
             if idx >= 0 and 0 <= idx < len(entries):
-                i = self._nodes.index(entries[idx])
+                target = entries[idx]
+                i = self._nodes.index(target)
+                new_node.source_file = target.source_file
+                new_node.leading_trivia = target.leading_trivia
                 self._nodes[i] = new_node
             else:
+                if entries:
+                    new_node.source_file = entries[-1].source_file
+                    new_node.leading_trivia = "\n"
+                else:
+                    app_state = getattr(self._win, "app_state", None)
+                    if app_state and hasattr(app_state, "source_files"):
+                        st_file = next(
+                            (
+                                p
+                                for p in app_state.source_files
+                                if p.name in ("startup.kdl", "autostart.kdl")
+                            ),
+                            None,
+                        )
+                        if st_file:
+                            new_node.source_file = st_file
+                            new_node.leading_trivia = "\n"
                 self._nodes.append(new_node)
             self._commit("startup entry")
             self._rebuild()

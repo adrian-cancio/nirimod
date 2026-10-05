@@ -44,6 +44,42 @@ class TestStartupEntryDelay(unittest.TestCase):
         self.assertFalse(is_sh)
         self.assertEqual(delay, 0)
 
+    def test_startup_node_preserves_source_file_across_edits(self):
+        from pathlib import Path
+
+        orig = KdlNode("spawn-at-startup", args=["waybar"])
+        orig.source_file = Path("/home/user/.config/niri/startup.kdl")
+
+        edited = make_startup_node("waybar -c bar.json", False, 0)
+        edited.source_file = orig.source_file
+
+        self.assertEqual(
+            edited.source_file, Path("/home/user/.config/niri/startup.kdl")
+        )
+
+    def test_multi_file_saving_preserves_startup_source_file(self):
+        import tempfile
+        from pathlib import Path
+        from nirimod.kdl_parser import save_niri_config_multi
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            primary = Path(tmpdir) / "config.kdl"
+            st_file = Path(tmpdir) / "startup.kdl"
+
+            inc_node = KdlNode("include", args=["startup.kdl"])
+            inc_node.source_file = primary
+
+            orig = KdlNode("spawn-at-startup", args=["waybar"])
+            orig.source_file = st_file
+
+            edited = make_startup_node("waybar -c bar.json", False, 0)
+            edited.source_file = orig.source_file
+
+            save_niri_config_multi([edited], [(inc_node, st_file)])
+
+            self.assertIn('"waybar" "-c" "bar.json"', st_file.read_text())
+            self.assertNotIn("waybar", primary.read_text())
+
 
 if __name__ == "__main__":
     unittest.main()
