@@ -563,16 +563,21 @@ def save_niri_config_multi(
         else:
             by_file.setdefault(src, []).append(node)
 
-    for path, file_nodes in by_file.items():
-        _atomic_write(path, write_kdl(file_nodes))
-
     _LARGE = 10**9
     primary_items: list[tuple[int, KdlNode]] = []
     for inc_node, _ in include_slots:
-        primary_items.append((getattr(inc_node, "_primary_order", _LARGE), inc_node))
+        if inc_node.source_file is None or inc_node.source_file == primary:
+            primary_items.append(
+                (getattr(inc_node, "_primary_order", _LARGE), inc_node)
+            )
+        else:
+            by_file.setdefault(inc_node.source_file, []).append(inc_node)
     for node in config_nodes:
         primary_items.append((getattr(node, "_primary_order", _LARGE), node))
     primary_items.sort(key=lambda x: x[0])
+
+    for path, file_nodes in by_file.items():
+        _atomic_write(path, write_kdl(file_nodes))
 
     _atomic_write(primary, write_kdl([n for _, n in primary_items]))
 

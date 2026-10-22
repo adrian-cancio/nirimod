@@ -11,8 +11,9 @@ from gi.repository import Gtk, Pango, GLib
 
 from pathlib import Path
 
+from nirimod import kdl_parser
 from nirimod import niri_ipc
-from nirimod.kdl_parser import NIRI_CONFIG, replace_config_file
+from nirimod.kdl_parser import replace_config_file
 from nirimod.pages.base import BasePage
 
 
@@ -24,11 +25,14 @@ class RawConfigPage(BasePage):
         self._scroll_positions: dict[Path, tuple[float, float]] = {}
         self._buffer_modified = False
         self._original_text = ""
+        self._active_file: Path | None = None
 
         self._current_files: list[Path] = []
         self._file_dropdown = Gtk.DropDown()
         self._file_dropdown.set_valign(Gtk.Align.CENTER)
-        self._file_dropdown.connect("notify::selected-item", self._on_file_selected)
+        self._file_dropdown_handler_id = self._file_dropdown.connect(
+            "notify::selected-item", self._on_file_selected
+        )
 
         title_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
         title_box.set_halign(Gtk.Align.CENTER)
@@ -92,13 +96,11 @@ class RawConfigPage(BasePage):
 
     def _save_scroll_position(self):
         """Persist the current scroll position for the active file."""
-        idx = self._file_dropdown.get_selected()
-        if idx == Gtk.INVALID_LIST_POSITION or idx >= len(self._current_files):
+        if self._active_file is None:
             return
-        path = self._current_files[idx]
         hadj = self._scroll.get_hadjustment()
         vadj = self._scroll.get_vadjustment()
-        self._scroll_positions[path] = (hadj.get_value(), vadj.get_value())
+        self._scroll_positions[self._active_file] = (hadj.get_value(), vadj.get_value())
 
     def _restore_scroll_position(self, path: Path):
         """Restore the saved scroll position for a given file, if any."""
@@ -120,30 +122,58 @@ class RawConfigPage(BasePage):
 
     def on_shown(self):
         """Called every time the user navigates back to this page."""
-        # Restore scroll for whichever file is currently selected
-        idx = self._file_dropdown.get_selected()
-        if idx != Gtk.INVALID_LIST_POSITION and idx < len(self._current_files):
-            self._restore_scroll_position(self._current_files[idx])
+        if self._active_file is not None:
+            self._restore_scroll_position(self._active_file)
 
     def refresh(self):
         state = self._win.app_state
+        primary = kdl_parser.NIRI_CONFIG
 
         if state.is_multi_file:
             self._current_files = sorted(list(state.source_files))
-            if NIRI_CONFIG in self._current_files:
-                self._current_files.remove(NIRI_CONFIG)
-                self._current_files.insert(0, NIRI_CONFIG)
+            if primary in self._current_files:
+                self._current_files.remove(primary)
+                self._current_files.insert(0, primary)
         else:
-            self._current_files = [NIRI_CONFIG]
+            self._current_files = [primary]
 
-        strings = [p.name for p in self._current_files]
+        base_dir = primary.parent
+        strings = []
+        for p in self._current_files:
+            try:
+                strings.append(str(p.relative_to(base_dir)))
+            except ValueError:
+                strings.append(p.name)
+
+        target_idx = 0
+        if self._active_file in self._current_files:
+            target_idx = self._current_files.index(self._active_file)
+
+        if (
+            hasattr(self, "_file_dropdown_handler_id")
+            and self._file_dropdown_handler_id
+        ):
+            self._file_dropdown.handler_block(self._file_dropdown_handler_id)
         self._file_dropdown.set_model(Gtk.StringList.new(strings))
+        self._file_dropdown.set_selected(target_idx)
+        if (
+            hasattr(self, "_file_dropdown_handler_id")
+            and self._file_dropdown_handler_id
+        ):
+            self._file_dropdown.handler_unblock(self._file_dropdown_handler_id)
 
-        self._load_selected_file()
+        target_file = self._current_files[target_idx] if self._current_files else None
+        if target_file and (
+            self._active_file != target_file or not self._buffer_modified
+        ):
+            self._do_load_file(target_file)
 
     def _reload_from_disk(self):
-        """Re-read the file from disk, discarding any edits."""
-        self._load_selected_file(force=True)
+        """Re-read the active file from disk, discarding any edits."""
+        if self._active_file is not None:
+            self._do_load_file(self._active_file)
+        else:
+            self._load_selected_file(force=True)
 
     # File loading
 
@@ -156,14 +186,36 @@ class RawConfigPage(BasePage):
         if idx == Gtk.INVALID_LIST_POSITION or idx >= len(self._current_files):
             return
 
-        if self._buffer_modified and not force:
-            self._confirm_discard_then(lambda: self._do_load_file(idx))
+        path = self._current_files[idx]
+        if path == self._active_file and not force:
             return
 
-        self._do_load_file(idx)
+        if self._buffer_modified and not force:
+            self._confirm_discard_then(
+                lambda: self._do_load_file(path),
+                on_cancel=self._revert_dropdown_to_active,
+            )
+            return
 
-    def _do_load_file(self, idx: int):
-        path = self._current_files[idx]
+        self._do_load_file(path)
+
+    def _revert_dropdown_to_active(self):
+        if self._active_file in self._current_files:
+            idx = self._current_files.index(self._active_file)
+            if (
+                hasattr(self, "_file_dropdown_handler_id")
+                and self._file_dropdown_handler_id
+            ):
+                self._file_dropdown.handler_block(self._file_dropdown_handler_id)
+            self._file_dropdown.set_selected(idx)
+            if (
+                hasattr(self, "_file_dropdown_handler_id")
+                and self._file_dropdown_handler_id
+            ):
+                self._file_dropdown.handler_unblock(self._file_dropdown_handler_id)
+
+    def _do_load_file(self, path: Path):
+        self._active_file = path
         text = path.read_text() if path.exists() else f"// File not found: {path}"
 
         self._buf.handler_block_by_func(self._on_buffer_changed)
@@ -191,11 +243,10 @@ class RawConfigPage(BasePage):
     # Save / Discard
 
     def _on_save_raw(self, *_):
-        idx = self._file_dropdown.get_selected()
-        if idx == Gtk.INVALID_LIST_POSITION or idx >= len(self._current_files):
+        path = self._active_file
+        if path is None:
             return
 
-        path = self._current_files[idx]
         text = self._buf.get_text(
             self._buf.get_start_iter(), self._buf.get_end_iter(), False
         )
@@ -253,7 +304,7 @@ class RawConfigPage(BasePage):
     def _on_discard_raw(self, *_):
         self._confirm_discard_then(self._reload_from_disk)
 
-    def _confirm_discard_then(self, callback):
+    def _confirm_discard_then(self, callback, on_cancel=None):
         import gi
 
         gi.require_version("Adw", "1")
@@ -272,6 +323,9 @@ class RawConfigPage(BasePage):
             if response == "discard":
                 self._set_modified(False)
                 callback()
+            else:
+                if on_cancel is not None:
+                    on_cancel()
 
         dialog.connect("response", _on_response)
         dialog.present(self._win)
@@ -323,5 +377,6 @@ class RawConfigPage(BasePage):
                     self.show_toast(f"Validation error: {msg[:120]}", timeout=8)
 
         niri_ipc.run_in_thread(
-            lambda: niri_ipc.validate_config(str(NIRI_CONFIG)), _on_validated
+            lambda: niri_ipc.validate_config(str(kdl_parser.NIRI_CONFIG)),
+            _on_validated,
         )

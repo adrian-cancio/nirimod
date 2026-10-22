@@ -38,6 +38,7 @@ NIRI_ACTIONS = [
     "focus-workspace-up",
     "focus-workspace",
     "move-column-to-workspace",
+    "move-window-to-workspace",
     "move-column-to-workspace-down",
     "move-column-to-workspace-up",
     "move-workspace-down",
@@ -86,6 +87,68 @@ NIRI_ACTIONS = [
 
 
 _KNOWN_BIND_PROPS = {"allow-when-locked", "repeat"}
+
+WORKSPACE_INDEX_ACTIONS = {
+    "focus-workspace",
+    "move-column-to-workspace",
+    "move-window-to-workspace",
+}
+
+
+def format_action_args_for_display(action: str, args: list) -> str:
+    if not args:
+        return ""
+    if action == "spawn-sh":
+        return str(args[0]) if args else ""
+    parts: list[str] = []
+    for a in args:
+        if isinstance(a, str):
+            if (
+                " " in a
+                or '"' in a
+                or (action in WORKSPACE_INDEX_ACTIONS and a.isdigit())
+            ):
+                escaped = a.replace("\\", "\\\\").replace('"', '\\"')
+                parts.append(f'"{escaped}"')
+            else:
+                parts.append(a)
+        else:
+            parts.append(str(a))
+    return " ".join(parts)
+
+
+def parse_action_args(action: str, arg_text: str) -> list:
+    stripped = arg_text.strip()
+    if not stripped:
+        return []
+    if action == "spawn-sh":
+        return [stripped]
+
+    import shlex
+
+    lexer = shlex.shlex(stripped, posix=False)
+    lexer.whitespace_split = True
+    lexer.commenters = ""
+    try:
+        raw_tokens = list(lexer)
+    except ValueError:
+        raw_tokens = stripped.split()
+
+    parsed: list = []
+    for tok in raw_tokens:
+        if len(tok) >= 2 and (
+            (tok.startswith('"') and tok.endswith('"'))
+            or (tok.startswith("'") and tok.endswith("'"))
+        ):
+            parsed.append(tok[1:-1])
+        elif action in WORKSPACE_INDEX_ACTIONS:
+            try:
+                parsed.append(int(tok, 0))
+            except ValueError:
+                parsed.append(tok)
+        else:
+            parsed.append(tok)
+    return parsed
 
 
 def _make_bind(
@@ -709,7 +772,7 @@ class BindingsPage(BasePage):
 
         arg_row = Adw.EntryRow(title="Argument (for spawn, focus-workspace, etc.)")
         cur_args = (bind.get("action_args") or []) if bind else []
-        arg_row.set_text(" ".join(str(a) for a in cur_args) if cur_args else "")
+        arg_row.set_text(format_action_args_for_display(cur_action, cur_args))
         act_grp.add(arg_row)
         prefs.add(act_grp)
 
@@ -775,15 +838,7 @@ class BindingsPage(BasePage):
             action_idx = act_combo.get_selected()
             action = NIRI_ACTIONS[action_idx] if action_idx < len(NIRI_ACTIONS) else ""
             arg_text = arg_row.get_text().strip()
-            if action == "spawn-sh":
-                new_args = [arg_text] if arg_text else []
-            else:
-                import shlex
-
-                try:
-                    new_args = shlex.split(arg_text) if arg_text else []
-                except ValueError:
-                    new_args = arg_text.split() if arg_text else []
+            new_args = parse_action_args(action, arg_text)
             new_bind = _make_bind(
                 keysym,
                 action,
@@ -822,9 +877,9 @@ class BindingsPage(BasePage):
 
     def _start_file_monitor(self):
         try:
-            from nirimod.kdl_parser import NIRI_CONFIG
+            from nirimod import kdl_parser
 
-            gfile = Gio.File.new_for_path(str(NIRI_CONFIG))
+            gfile = Gio.File.new_for_path(str(kdl_parser.NIRI_CONFIG))
             monitor = gfile.monitor_file(Gio.FileMonitorFlags.NONE, None)
             monitor.connect("changed", self._on_config_file_changed)
             self._file_monitor = monitor

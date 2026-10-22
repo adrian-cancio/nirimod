@@ -582,6 +582,12 @@ class NiriModWindow(Adw.ApplicationWindow):
             self._build_search_index()
 
     def _on_save(self):
+        if self._current_page_id == "raw_config" or self._raw_config_textview_focused():
+            raw_page = self._pages.get("raw_config")
+            if raw_page and hasattr(raw_page, "_on_save_raw"):
+                raw_page._on_save_raw()
+                return
+
         from nirimod import app_settings
 
         if app_settings.get("auto_backup", True):

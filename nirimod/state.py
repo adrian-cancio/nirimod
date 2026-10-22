@@ -5,8 +5,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from nirimod import kdl_parser
 from nirimod.kdl_parser import (
-    NIRI_CONFIG,
     KdlNode,
     load_niri_config_multi,
     parse_kdl,
@@ -46,7 +46,7 @@ class AppState:
             has_touchpad=niri_ipc.has_touchpad(),
         )
         self._nodes, self._include_slots = load_niri_config_multi()
-        self._source_files = {NIRI_CONFIG}
+        self._source_files = {kdl_parser.NIRI_CONFIG}
         for _, path in self._include_slots:
             if path.exists():
                 self._source_files.add(path)
@@ -199,7 +199,7 @@ class AppState:
 
     def reload_from_disk(self) -> None:
         self._nodes, self._include_slots = load_niri_config_multi()
-        self._source_files = {NIRI_CONFIG}
+        self._source_files = {kdl_parser.NIRI_CONFIG}
         for _, path in self._include_slots:
             if path.exists():
                 self._source_files.add(path)
